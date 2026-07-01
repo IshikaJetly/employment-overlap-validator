@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Employment overlap validator</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/dist/tabler-icons.min.css" />
+<style>
+  :root{
+    --surface-0:#f0efe9;
+    --surface-1:#f5f4ef;
+    --surface-2:#ffffff;
+    --text-primary:#2c2c2a;
+    --text-secondary:#5f5e5a;
+    --border:#dedcd4;
+    --border-danger:#e88f8f;
+    --bg-danger:#fcebeb;
+    --text-danger:#a32d2d;
+    --bg-success:#eaf3de;
+    --text-success:#3b6d11;
+    --bg-warning:#faeeda;
+    --text-warning:#854f0b;
+    --radius:8px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--surface-0);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    color:var(--text-primary);
+  }
+  .wrap{
+    max-width:760px;
+    margin:0 auto;
+    padding:24px 20px 40px;
+  }
+  h1{
+    font-size:18px;
+    font-weight:600;
+    margin:0 0 4px;
+  }
+  .subtitle{
+    font-size:13px;
+    color:var(--text-secondary);
+    margin:0 0 20px;
+  }
+  input[type="text"], input[type="date"]{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:0 8px;
+    font-size:13px;
+    height:32px;
+    background:var(--surface-2);
+    color:var(--text-primary);
+  }
+  input[type="text"]:focus, input[type="date"]:focus{
+    outline:2px solid #85b7eb;
+    outline-offset:-1px;
+  }
+  button{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--surface-2);
+    color:var(--text-primary);
+    cursor:pointer;
+    font-size:13px;
+    padding:6px 10px;
+  }
+  button:hover{ background:var(--surface-1); }
+  label{ font-size:12px; color:var(--text-secondary); }
+  #rows > div{ background:var(--surface-2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Employment overlap validator</h1>
+  <p class="subtitle">Enter each employment period. Full-time periods are checked for overlap and against the 5-of-10-year rule.</p>
+
+  <div id="rows" style="display:flex; flex-direction:column; gap:8px; margin-bottom:0.75rem;"></div>
+  <button id="addRow" style="margin-bottom:1rem;"><i class="ti ti-plus" style="font-size:14px; vertical-align:-2px; margin-right:4px;"></i>Add employment period</button>
+
+  <div style="position:relative; height:70px; background:var(--surface-1); border-radius:var(--radius); padding:8px; margin-bottom:0.75rem;">
+    <div id="timeline" style="position:relative; height:100%;"></div>
+  </div>
+
+  <div id="summary" style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px;"></div>
+  <div id="warning" style="margin-top:8px;"></div>
+</div>
+
+<script>
+let entries = [
+  { start: '10/01/2020', end: '08/01/2024', employer: 'TreeHouse Foods', type: 'full' },
+  { start: '06/01/2023', end: '01/01/2026', employer: 'Chesapeake Waste Industries', type: 'full' }
+];
+const colorPalette = ['#378ADD','#1D9E75','#D85A30','#BA7517'];
+const datePattern = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/;
+const REQUIRED_YEARS = 5;
+const WINDOW_YEARS = 10;
+
+function toDate(mdY){
+  if (!mdY || !datePattern.test(mdY)) return null;
+  const [m,d,y] = mdY.split('/').map(Number);
+  return new Date(y, m-1, d);
+}
+function mdyToIso(mdY){
+  const d = toDate(mdY);
+  if (!d) return '';
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+function isoToMdy(iso){
+  if (!iso) return '';
+  const [y,m,d] = iso.split('-');
+  return `${m}/${d}/${y}`;
+}
+function unionDaysFromRanges(ranges){
+  const sorted = ranges.slice().sort((a,b)=>a[0]-b[0]);
+  let total = 0, curStart = null, curEnd = null;
+  for (const [s,e] of sorted){
+    if (curStart === null){ curStart = s; curEnd = e; continue; }
+    if (s <= curEnd){ curEnd = Math.max(curEnd, e); }
+    else { total += (curEnd - curStart)/86400000; curStart = s; curEnd = e; }
+  }
+  if (curStart !== null) total += (curEnd - curStart)/86400000;
+  return total;
+}
+function pairwiseOverlaps(intervals){
+  const conflicts = [];
+  for (let i=0;i<intervals.length;i++){
+    for (let j=i+1;j<intervals.length;j++){
+      if (intervals[i].type !== 'full' || intervals[j].type !== 'full') continue;
+      const s1=toDate(intervals[i].start), e1=toDate(intervals[i].end);
+      const s2=toDate(intervals[j].start), e2=toDate(intervals[j].end);
+      if (!s1 || !e1 || !s2 || !e2) continue;
+      if (s1 < e2 && s2 < e1) conflicts.push([i,j]);
+    }
+  }
+  return conflicts;
+}
+function ftYearsInWindow(intervals){
+  const today = new Date();
+  const windowStart = new Date(today.getFullYear() - WINDOW_YEARS, today.getMonth(), today.getDate());
+  const ranges = intervals
+    .filter(e => e.type === 'full')
+    .map(e => [toDate(e.start), toDate(e.end)])
+    .filter(([s,e]) => s && e)
+    .map(([s,e]) => [Math.max(s.getTime(), windowStart.getTime()), Math.min(e.getTime(), today.getTime())])
+    .filter(([s,e]) => e > s);
+  const days = unionDaysFromRanges(ranges);
+  return days / 365;
+}
+
+function dateFieldHtml(i, f, value){
+  const valid = value === '' || datePattern.test(value);
+  return `
+    <div style="position:relative; display:inline-flex; align-items:center;">
+      <input type="text" value="${value}" data-i="${i}" data-f="${f}" data-kind="text" placeholder="MM/DD/YYYY" maxlength="10" style="width:130px; padding-right:28px; border-color:${valid?'var(--border)':'var(--border-danger)'};" />
+      <button data-i="${i}" data-f="${f}" data-kind="calbtn" aria-label="Pick date" style="position:absolute; right:2px; width:24px; height:24px; padding:0; border:none; background:transparent; display:flex; align-items:center; justify-content:center; cursor:pointer;">
+        <i class="ti ti-calendar" style="font-size:14px; color:var(--text-secondary);"></i>
+      </button>
+      <input type="date" value="${mdyToIso(value)}" data-i="${i}" data-f="${f}" data-kind="native" style="position:absolute; right:2px; width:24px; height:24px; opacity:0; padding:0; border:none;" />
+    </div>
+  `;
+}
+
+function render(){
+  const rows = document.getElementById('rows');
+  rows.innerHTML = '';
+  entries.forEach((e, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; flex-direction:column; gap:6px; padding:8px; border:1px solid var(--border); border-radius:var(--radius);';
+    row.innerHTML = `
+      <div style="display:flex; gap:6px; align-items:center;">
+        ${dateFieldHtml(i,'start',e.start)}
+        ${dateFieldHtml(i,'end',e.end)}
+        <input type="text" value="${e.employer}" data-i="${i}" data-f="employer" data-kind="text" placeholder="Employer name" style="width:130px;" />
+        <label style="display:flex; align-items:center; gap:3px; white-space:nowrap;">
+          <input type="radio" name="type-${i}" value="part" data-i="${i}" data-f="type" ${e.type==='part'?'checked':''} />PT
+        </label>
+        <label style="display:flex; align-items:center; gap:3px; white-space:nowrap;">
+          <input type="radio" name="type-${i}" value="full" data-i="${i}" data-f="type" ${e.type==='full'?'checked':''} />FT
+        </label>
+        <button data-remove="${i}" aria-label="Remove entry" style="width:32px; height:32px; padding:0; margin-left:auto;"><i class="ti ti-trash" style="font-size:14px;"></i></button>
+      </div>
+    `;
+    rows.appendChild(row);
+  });
+
+  rows.querySelectorAll('input[data-kind="text"]').forEach(inp => {
+    inp.addEventListener('input', (ev) => {
+      const i = +ev.target.dataset.i, f = ev.target.dataset.f;
+      entries[i][f] = ev.target.value;
+      render();
+      renderTimelineAndSummary();
+      const el = document.querySelector(`input[data-kind="text"][data-i="${i}"][data-f="${f}"]`);
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    });
+  });
+
+  rows.querySelectorAll('button[data-kind="calbtn"]').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      const i = ev.currentTarget.dataset.i, f = ev.currentTarget.dataset.f;
+      const native = document.querySelector(`input[data-kind="native"][data-i="${i}"][data-f="${f}"]`);
+      if (native){
+        if (typeof native.showPicker === 'function'){
+          try { native.showPicker(); } catch(err){ native.focus(); native.click(); }
+        } else {
+          native.focus();
+          native.click();
+        }
+      }
+    });
+  });
+
+  rows.querySelectorAll('input[data-kind="native"]').forEach(inp => {
+    inp.addEventListener('change', (ev) => {
+      const i = +ev.target.dataset.i, f = ev.target.dataset.f;
+      entries[i][f] = isoToMdy(ev.target.value);
+      render();
+      renderTimelineAndSummary();
+    });
+  });
+
+  rows.querySelectorAll('input[type=radio]').forEach(inp => {
+    inp.addEventListener('change', (ev) => {
+      const i = +ev.target.dataset.i;
+      entries[i].type = ev.target.value;
+      renderTimelineAndSummary();
+    });
+  });
+  rows.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      entries.splice(+ev.currentTarget.dataset.remove, 1);
+      render(); renderTimelineAndSummary();
+    });
+  });
+}
+
+function renderTimelineAndSummary(){
+  const conflicts = pairwiseOverlaps(entries);
+  const conflictIdx = new Set(conflicts.flat());
+
+  const tl = document.getElementById('timeline');
+  tl.innerHTML = '';
+  const validEntries = entries.filter(e => toDate(e.start) && toDate(e.end));
+  if (validEntries.length){
+    const allDates = validEntries.flatMap(e=>[toDate(e.start).getTime(), toDate(e.end).getTime()]);
+    const minD = Math.min(...allDates), maxD = Math.max(...allDates);
+    const span = Math.max(maxD - minD, 1);
+
+    entries.forEach((e,i) => {
+      const sd = toDate(e.start), ed = toDate(e.end);
+      if (!sd || !ed) return;
+      const left = (sd.getTime() - minD)/span*100;
+      const width = Math.max((ed.getTime() - sd.getTime())/span*100, 1);
+      const bar = document.createElement('div');
+      const isConflict = conflictIdx.has(i);
+      bar.style.cssText = `position:absolute; left:${left}%; width:${width}%; top:${i*20}px; height:16px; border-radius:4px; display:flex; align-items:center; padding:0 6px; font-size:10px; overflow:hidden; white-space:nowrap; gap:4px; background:${isConflict ? '#f09595' : colorPalette[i % colorPalette.length]}; color:#fff;`;
+      bar.innerHTML = `<span>${e.employer || 'Unnamed'}</span><span style="opacity:0.85;">${e.type==='part'?'(PT)':'(FT)'}</span>`;
+      tl.appendChild(bar);
+    });
+
+    conflicts.forEach(([i,j]) => {
+      const s = Math.max(toDate(entries[i].start).getTime(), toDate(entries[j].start).getTime());
+      const en = Math.min(toDate(entries[i].end).getTime(), toDate(entries[j].end).getTime());
+      const left = (s - minD)/span*100;
+      const width = Math.max((en - s)/span*100, 0.5);
+      const band = document.createElement('div');
+      band.style.cssText = `position:absolute; left:${left}%; width:${width}%; top:0; bottom:0; background:rgba(224,60,60,0.18); border-left:1px solid var(--border-danger); border-right:1px solid var(--border-danger);`;
+      tl.appendChild(band);
+    });
+  }
+
+  const ftYears = ftYearsInWindow(entries);
+  const meetsRule = ftYears >= REQUIRED_YEARS;
+  const flaggedOverlapDays = conflicts.reduce((acc,[i,j]) => {
+    const s = Math.max(toDate(entries[i].start).getTime(), toDate(entries[j].start).getTime());
+    const en = Math.min(toDate(entries[i].end).getTime(), toDate(entries[j].end).getTime());
+    return acc + Math.max((en - s)/86400000, 0);
+  }, 0);
+
+  const summary = document.getElementById('summary');
+  summary.innerHTML = `
+    <div style="background:var(--surface-1); border-radius:var(--radius); padding:0.6rem 0.75rem;">
+      <p style="font-size:12px; color:var(--text-secondary); margin:0 0 2px;">FT in past 10 yrs</p>
+      <p style="font-size:18px; font-weight:600; margin:0;">${ftYears.toFixed(1)} / ${REQUIRED_YEARS} yrs</p>
+    </div>
+    <div style="background:${meetsRule ? 'var(--bg-success)' : 'var(--bg-danger)'}; border-radius:var(--radius); padding:0.6rem 0.75rem;">
+      <p style="font-size:12px; color:${meetsRule ? 'var(--text-success)' : 'var(--text-danger)'}; margin:0 0 2px;">Meets 5-of-10-yr rule</p>
+      <p style="font-size:18px; font-weight:600; margin:0; color:${meetsRule ? 'var(--text-success)' : 'var(--text-danger)'};">${meetsRule ? 'Yes' : 'No'}</p>
+    </div>
+    <div style="background:${flaggedOverlapDays>0 ? 'var(--bg-danger)' : 'var(--bg-success)'}; border-radius:var(--radius); padding:0.6rem 0.75rem;">
+      <p style="font-size:12px; color:${flaggedOverlapDays>0 ? 'var(--text-danger)' : 'var(--text-success)'}; margin:0 0 2px;">Flagged FT overlap (days)</p>
+      <p style="font-size:18px; font-weight:600; margin:0; color:${flaggedOverlapDays>0 ? 'var(--text-danger)' : 'var(--text-success)'};">${Math.round(flaggedOverlapDays)}</p>
+    </div>
+  `;
+
+  const warn = document.getElementById('warning');
+  const hasInvalidDate = entries.some(e => (e.start && !datePattern.test(e.start)) || (e.end && !datePattern.test(e.end)));
+  if (conflicts.length){
+    const names = conflicts.map(([i,j]) => `${entries[i].employer || 'Entry '+(i+1)} and ${entries[j].employer || 'Entry '+(j+1)}`).join('; ');
+    warn.innerHTML = `<div style="background:var(--bg-danger); border-radius:var(--radius); padding:8px 0.75rem; font-size:12px; color:var(--text-danger);"><i class="ti ti-alert-triangle" style="vertical-align:-2px; margin-right:4px;"></i>Full-time overlap detected between: ${names}.</div>`;
+  } else if (hasInvalidDate) {
+    warn.innerHTML = `<div style="background:var(--bg-warning); border-radius:var(--radius); padding:8px 0.75rem; font-size:12px; color:var(--text-warning);"><i class="ti ti-alert-circle" style="vertical-align:-2px; margin-right:4px;"></i>One or more dates aren't in MM/DD/YYYY format yet.</div>`;
+  } else {
+    warn.innerHTML = `<div style="background:var(--bg-success); border-radius:var(--radius); padding:8px 0.75rem; font-size:12px; color:var(--text-success);"><i class="ti ti-check" style="vertical-align:-2px; margin-right:4px;"></i>No full-time overlap.</div>`;
+  }
+}
+
+document.getElementById('addRow').addEventListener('click', () => {
+  entries.push({ start:'', end:'', employer:'', type:'full' });
+  render(); renderTimelineAndSummary();
+});
+
+render();
+renderTimelineAndSummary();
+</script>
+</body>
+</html>
