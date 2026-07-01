@@ -79,9 +79,10 @@
   <div id="rows" style="display:flex; flex-direction:column; gap:8px; margin-bottom:0.75rem;"></div>
   <button id="addRow" style="margin-bottom:1rem;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px; margin-right:4px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add employment period</button>
 
-  <div style="position:relative; height:70px; background:var(--surface-1); border-radius:var(--radius); padding:8px; margin-bottom:0.75rem;">
-    <div id="timeline" style="position:relative; height:100%;"></div>
+  <div id="timelineWrap" style="position:relative; background:var(--surface-1); border-radius:var(--radius); padding:8px; margin-bottom:0.75rem; overflow:hidden;">
+    <div id="timeline" style="position:relative;"></div>
   </div>
+  <div id="legend" style="display:flex; flex-direction:column; gap:4px; margin-bottom:0.75rem;"></div>
 
   <div id="summary" style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px;"></div>
   <div id="warning" style="margin-top:8px;"></div>
@@ -239,6 +240,8 @@ function renderTimelineAndSummary(){
 
   const tl = document.getElementById('timeline');
   tl.innerHTML = '';
+  const rowHeight = 20;
+  tl.style.height = Math.max(entries.length * rowHeight, 40) + 'px';
   const validEntries = entries.filter(e => toDate(e.start) && toDate(e.end));
   if (validEntries.length){
     const allDates = validEntries.flatMap(e=>[toDate(e.start).getTime(), toDate(e.end).getTime()]);
@@ -253,8 +256,8 @@ function renderTimelineAndSummary(){
       const bar = document.createElement('div');
       const isConflict = conflictIdx.has(i);
       const barColor = isConflict ? '#f09595' : (e.type ? colorPalette[i % colorPalette.length] : '#b4b2a9');
-      bar.style.cssText = `position:absolute; left:${left}%; width:${width}%; top:${i*20}px; height:16px; border-radius:4px; display:flex; align-items:center; padding:0 6px; font-size:10px; overflow:hidden; white-space:nowrap; gap:4px; background:${barColor}; color:#fff;`;
-      bar.innerHTML = `<span>${e.employer || 'Unnamed'}</span><span style="opacity:0.85;">${e.type==='part' ? '(PT)' : e.type==='full' ? '(FT)' : '(no type)'}</span>`;
+      bar.title = `${e.employer || 'Unnamed'} (${e.type==='part'?'PT':e.type==='full'?'FT':'no type'})`;
+      bar.style.cssText = `position:absolute; left:${left}%; width:${width}%; top:${i*20}px; height:16px; border-radius:4px; background:${barColor};`;
       tl.appendChild(bar);
     });
 
@@ -268,6 +271,19 @@ function renderTimelineAndSummary(){
       tl.appendChild(band);
     });
   }
+
+  const legend = document.getElementById('legend');
+  legend.innerHTML = entries.map((e,i) => {
+    const barColor = e.type ? colorPalette[i % colorPalette.length] : '#b4b2a9';
+    const typeLabel = e.type==='part' ? 'Part-time' : e.type==='full' ? 'Full-time' : 'No type selected';
+    const dateLabel = (e.start && e.end) ? `${e.start} \u2013 ${e.end}` : 'Dates incomplete';
+    return `<div style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary);">
+      <span style="width:10px; height:10px; border-radius:2px; background:${barColor}; flex-shrink:0;"></span>
+      <span style="color:var(--text-primary); font-weight:500;">${e.employer || 'Unnamed'}</span>
+      <span>${dateLabel}</span>
+      <span>${typeLabel}</span>
+    </div>`;
+  }).join('');
 
   const ftYears = ftYearsInWindow(entries);
   const meetsRule = ftYears >= REQUIRED_YEARS;
