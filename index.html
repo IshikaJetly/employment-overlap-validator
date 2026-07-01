@@ -248,12 +248,13 @@ function renderTimelineAndSummary(){
     entries.forEach((e,i) => {
       const sd = toDate(e.start), ed = toDate(e.end);
       if (!sd || !ed) return;
-      const left = (sd.getTime() - minD)/span*100;
-      const width = Math.max((ed.getTime() - sd.getTime())/span*100, 1);
+      const left = Math.min((sd.getTime() - minD)/span*100, 100 - 4);
+      const width = Math.max((ed.getTime() - sd.getTime())/span*100, 4);
       const bar = document.createElement('div');
       const isConflict = conflictIdx.has(i);
-      bar.style.cssText = `position:absolute; left:${left}%; width:${width}%; top:${i*20}px; height:16px; border-radius:4px; display:flex; align-items:center; padding:0 6px; font-size:10px; overflow:hidden; white-space:nowrap; gap:4px; background:${isConflict ? '#f09595' : colorPalette[i % colorPalette.length]}; color:#fff;`;
-      bar.innerHTML = `<span>${e.employer || 'Unnamed'}</span><span style="opacity:0.85;">${e.type==='part'?'(PT)':'(FT)'}</span>`;
+      const barColor = isConflict ? '#f09595' : (e.type ? colorPalette[i % colorPalette.length] : '#b4b2a9');
+      bar.style.cssText = `position:absolute; left:${left}%; width:${width}%; top:${i*20}px; height:16px; border-radius:4px; display:flex; align-items:center; padding:0 6px; font-size:10px; overflow:hidden; white-space:nowrap; gap:4px; background:${barColor}; color:#fff;`;
+      bar.innerHTML = `<span>${e.employer || 'Unnamed'}</span><span style="opacity:0.85;">${e.type==='part' ? '(PT)' : e.type==='full' ? '(FT)' : '(no type)'}</span>`;
       tl.appendChild(bar);
     });
 
@@ -294,9 +295,12 @@ function renderTimelineAndSummary(){
 
   const warn = document.getElementById('warning');
   const hasInvalidDate = entries.some(e => (e.start && !datePattern.test(e.start)) || (e.end && !datePattern.test(e.end)));
+  const hasMissingType = entries.some(e => (e.start || e.end || e.employer) && !e.type);
   if (conflicts.length){
     const names = conflicts.map(([i,j]) => `${entries[i].employer || 'Entry '+(i+1)} and ${entries[j].employer || 'Entry '+(j+1)}`).join('; ');
     warn.innerHTML = `<div style="background:var(--bg-danger); border-radius:var(--radius); padding:8px 0.75rem; font-size:12px; color:var(--text-danger); display:flex; align-items:center; gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Full-time overlap detected between: ${names}.</div>`;
+  } else if (hasMissingType) {
+    warn.innerHTML = `<div style="background:var(--bg-warning); border-radius:var(--radius); padding:8px 0.75rem; font-size:12px; color:var(--text-warning); display:flex; align-items:center; gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Select part-time or full-time for every entry to include it in the overlap and 5-of-10-year checks.</div>`;
   } else if (hasInvalidDate) {
     warn.innerHTML = `<div style="background:var(--bg-warning); border-radius:var(--radius); padding:8px 0.75rem; font-size:12px; color:var(--text-warning); display:flex; align-items:center; gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>One or more dates aren't in MM/DD/YYYY format yet.</div>`;
   } else {
@@ -305,11 +309,11 @@ function renderTimelineAndSummary(){
 }
 
 document.getElementById('addRow').addEventListener('click', () => {
-  entries.push({ start:'', end:'', employer:'', type:'full' });
+  entries.push({ start:'', end:'', employer:'', type:'' });
   render(); renderTimelineAndSummary();
 });
 
-entries.push({ start:'', end:'', employer:'', type:'full' });
+entries.push({ start:'', end:'', employer:'', type:'' });
 render();
 renderTimelineAndSummary();
 </script>
