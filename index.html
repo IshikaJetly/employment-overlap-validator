@@ -111,6 +111,11 @@ function isoToMdy(iso){
   const [y,m,d] = iso.split('-');
   return `${m}/${d}/${y}`;
 }
+function daysBetween(a,b){
+  const da = toDate(a), db = toDate(b);
+  if (!da || !db) return 0;
+  return (db - da) / 86400000;
+}
 function unionDaysFromRanges(ranges){
   const sorted = ranges.slice().sort((a,b)=>a[0]-b[0]);
   let total = 0, curStart = null, curEnd = null;
@@ -134,6 +139,23 @@ function pairwiseOverlaps(intervals){
     }
   }
   return conflicts;
+}
+
+function getSuggestions(intervals){
+  const conflicts = pairwiseOverlaps(intervals);
+  const suggested = new Map(); // index -> array of reason strings
+  conflicts.forEach(([i,j]) => {
+    const di = daysBetween(intervals[i].start, intervals[i].end);
+    const dj = daysBetween(intervals[j].start, intervals[j].end);
+    const shorterIdx = di <= dj ? i : j;
+    const longerIdx = di <= dj ? j : i;
+    const shorterDays = Math.min(di, dj);
+    const longerDays = Math.max(di, dj);
+    const reason = `Overlaps with ${intervals[longerIdx].employer || 'another entry'} (${Math.round(shorterDays)} days vs ${Math.round(longerDays)} days) \u2014 shorter entry suggested for review`;
+    if (!suggested.has(shorterIdx)) suggested.set(shorterIdx, []);
+    suggested.get(shorterIdx).push(reason);
+  });
+  return { conflicts, suggested };
 }
 function ftYearsInWindow(intervals){
   const today = new Date();
@@ -164,10 +186,18 @@ function dateFieldHtml(i, f, value){
 function render(){
   const rows = document.getElementById('rows');
   rows.innerHTML = '';
+  const { suggested } = getSuggestions(entries);
   entries.forEach((e, i) => {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex; flex-direction:column; gap:6px; padding:8px; border:1px solid var(--border); border-radius:var(--radius);';
+    const isSuggested = suggested.has(i);
+    row.style.cssText = `display:flex; flex-direction:column; gap:6px; padding:8px; border:1px solid ${isSuggested ? 'var(--border-danger)' : 'var(--border)'}; border-radius:var(--radius); background:${isSuggested ? 'var(--bg-danger)' : 'var(--surface-2)'};`;
+    const badgeHtml = isSuggested ? `
+      <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-danger); font-weight:600;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Suggested for review \u2014 <span style="font-weight:400;">${suggested.get(i).join('; ')}</span>
+      </div>` : '';
     row.innerHTML = `
+      ${badgeHtml}
       <div style="display:flex; gap:6px; align-items:center;">
         ${dateFieldHtml(i,'start',e.start)}
         ${dateFieldHtml(i,'end',e.end)}
@@ -223,7 +253,9 @@ function render(){
     inp.addEventListener('change', (ev) => {
       const i = +ev.target.dataset.i;
       entries[i].type = ev.target.value;
+      render();
       renderTimelineAndSummary();
+      rows.querySelectorAll(`input[name="type-${i}"]`).forEach(r => { if (r.value === entries[i].type) r.focus(); });
     });
   });
   rows.querySelectorAll('[data-remove]').forEach(btn => {
@@ -235,7 +267,7 @@ function render(){
 }
 
 function renderTimelineAndSummary(){
-  const conflicts = pairwiseOverlaps(entries);
+  const { conflicts, suggested } = getSuggestions(entries);
   const conflictIdx = new Set(conflicts.flat());
 
   const tl = document.getElementById('timeline');
@@ -256,8 +288,9 @@ function renderTimelineAndSummary(){
       const bar = document.createElement('div');
       const isConflict = conflictIdx.has(i);
       const barColor = isConflict ? '#f09595' : (e.type ? colorPalette[i % colorPalette.length] : '#b4b2a9');
-      bar.title = `${e.employer || 'Unnamed'} (${e.type==='part'?'PT':e.type==='full'?'FT':'no type'})`;
-      bar.style.cssText = `position:absolute; left:${left}%; width:${width}%; top:${i*20}px; height:16px; border-radius:4px; background:${barColor};`;
+      const isSuggested = suggested.has(i);
+      bar.title = `${e.employer || 'Unnamed'} (${e.type==='part'?'PT':e.type==='full'?'FT':'no type'})${isSuggested ? ' \u2014 suggested for review' : ''}`;
+      bar.style.cssText = `position:absolute; left:${left}%; width:${width}%; top:${i*20}px; height:16px; border-radius:4px; background:${barColor};${isSuggested ? ' outline:2px dashed #a32d2d; outline-offset:1px;' : ''}`;
       tl.appendChild(bar);
     });
 
@@ -277,11 +310,13 @@ function renderTimelineAndSummary(){
     const barColor = e.type ? colorPalette[i % colorPalette.length] : '#b4b2a9';
     const typeLabel = e.type==='part' ? 'Part-time' : e.type==='full' ? 'Full-time' : 'No type selected';
     const dateLabel = (e.start && e.end) ? `${e.start} \u2013 ${e.end}` : 'Dates incomplete';
+    const suggestedTag = suggested.has(i) ? `<span style="color:var(--text-danger); font-weight:600;">Suggested for review</span>` : '';
     return `<div style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary);">
       <span style="width:10px; height:10px; border-radius:2px; background:${barColor}; flex-shrink:0;"></span>
       <span style="color:var(--text-primary); font-weight:500;">${e.employer || 'Unnamed'}</span>
       <span>${dateLabel}</span>
       <span>${typeLabel}</span>
+      ${suggestedTag}
     </div>`;
   }).join('');
 
